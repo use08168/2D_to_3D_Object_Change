@@ -1,0 +1,21 @@
+# 논문 PDF (저작권/용량) — 저장소에 올리지 않음
+paper/
+
+# 원본 촬영 데이터 (용량/프라이버시)
+data/
+
+# 생성물·중간 산출물 (캘리브 결과·스냅샷·마커 등)
+output/
+
+# 모델 가중치 (자동 다운로드)
+*.pt
+*.pth
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db
+.DS_Store
