@@ -110,11 +110,12 @@ def _box_mesh(center, axis, length, radius):
 
 
 def render_plotly(objects, markers=None, ws=(240, 320), title="virtual 3D (interactive)",
-                  html_path=None):
+                  html_path=None, open_browser=False):
     """마우스로 회전/확대/이동 가능한 인터랙티브 3D 씬(plotly). fig 반환 + (옵션)HTML 저장.
 
     원통/박스는 solid mesh, 마커는 평면 위 사각형, 원점(id0) 축 표시.
-    다른 기능과 접목하기 좋게 표준 plotly Figure로 반환.
+    HTML은 plotly.js를 **자체 포함**(오프라인에서도 파일만 열면 작동).
+    open_browser=True면 저장한 HTML을 기본 브라우저로 연다.
     """
     import plotly.graph_objects as go
     palette = ["#00c8ff", "#00ff78", "#ffa000", "#c864ff", "#78dcff"]
@@ -155,7 +156,10 @@ def render_plotly(objects, markers=None, ws=(240, 320), title="virtual 3D (inter
                                  aspectmode="data"),
                       margin=dict(l=0, r=0, t=30, b=0))
     if html_path:
-        fig.write_html(html_path, include_plotlyjs="cdn")
+        fig.write_html(html_path, include_plotlyjs=True, full_html=True)  # 자체 포함(오프라인 OK)
+        if open_browser:
+            import webbrowser, os
+            webbrowser.open("file://" + os.path.abspath(html_path))
     return fig
 
 
