@@ -119,12 +119,10 @@ def pixels_to_plane(pixels, K, dist, rvec, tvec):
     R, _ = cv2.Rodrigues(rvec)
     Rt = R.T
     C = (-Rt @ np.asarray(tvec, dtype=np.float64).reshape(3))  # 보드 좌표계 카메라 중심
-    out = []
-    for x, y in und:
-        d = Rt @ np.array([x, y, 1.0])           # 보드 좌표계 광선 방향
-        s = -C[2] / d[2]                          # z=0 까지
-        out.append(C + s * d)
-    return np.array(out)
+    D = np.column_stack([und, np.ones(len(und))])   # (N,3) 정규화 광선
+    Dw = D @ Rt.T                                    # (N,3) 보드좌표계 광선 방향 (벡터화)
+    s = -C[2] / Dw[:, 2]                             # z=0 까지
+    return C[None, :] + s[:, None] * Dw
 
 
 def height_from_vertical_edge(base_px, top_px, K, dist, rvec, tvec):
