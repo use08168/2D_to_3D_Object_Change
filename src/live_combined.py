@@ -31,7 +31,7 @@ def _inset(base, small, x, y, w, h, label):
 
 def process_frame_combined(frame, pipe, model, board, K, dist, square_len=0.038,
                            min_height_mm=6, min_area_px=1200, imgsz=640,
-                           device="cuda", marker_map=None):
+                           device="cuda", marker_map=None, shape_mode="auto"):
     """한 프레임 → (합성 vis, objects, markers). 보드 미검출 시 (원본, [], []).
 
     markers = '전체 마커 지도'(검출과 무관, 항상 전부). marker_map을 주면 그걸(분산앵커 지도),
@@ -111,7 +111,23 @@ def process_frame_combined(frame, pipe, model, board, K, dist, square_len=0.038,
             o = {"type": "lie", "contour": c, "bbox": (x, y, w, h),
                  "length_mm": L, "width_mm": Wd, "center_mm": (r[0][0]*1000, r[0][1]*1000)}
             o["label"] = f"L{L:.0f} W{Wd:.0f}mm"
-        o["cyl"] = s3.fit_cylinder(hm["pts_board"][b] * 1000.0)   # 가상3D용 원통(mm)
+        # 가상3D 프리미티브: 축은 DA-PCA가 아니라 ArUco 분류에 고정(거리에 따른 DA 기울어짐 방지)
+        P = hm["pts_board"][b] * 1000.0
+        P = P[np.isfinite(P).all(1)]
+        cyl = s3.fit_cylinder(P)
+        if cyl is not None:
+            c, ax, L, r = cyl
+            if da_h > STAND_TH_MM:                      # 선 물체 → 축을 수직(평면 법선)으로 스냅
+                zlo, zhi = np.percentile(P[:, 2], [2, 98])
+                cyl = (np.array([P[:, 0].mean(), P[:, 1].mean(), (zlo+zhi)/2]),
+                       np.array([0., 0., 1.]), float(zhi-zlo), r)
+            else:                                        # 누운 물체 → 축을 평면 안으로 투영
+                axp = np.array([ax[0], ax[1], 0.0])
+                n = np.linalg.norm(axp)
+                axp = axp/n if n > 1e-6 else np.array([1., 0., 0.])
+                cyl = (np.array([c[0], c[1], r]), axp, L, r)
+        o["cyl"] = cyl
+        o["shape"] = (s3.classify_shape(o["contour"]) if shape_mode == "auto" else shape_mode)
         objects.append(o)
 
     # ---- 합성 화면 ----
