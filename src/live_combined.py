@@ -55,21 +55,31 @@ def process_frame_combined(frame, pipe, model, board, K, dist, square_len=0.038,
 
     res = model(imgu, device=device, retina_masks=True, imgsz=imgsz,
                 conf=0.4, iou=0.9, verbose=False)
-    masks = res[0].masks.data.cpu().numpy() if res[0].masks is not None else np.zeros((0, H, W))
-
+    r = res[0]
     cand = []
-    for m in masks:
-        b = m > 0.5; a = int(b.sum())
-        if a < min_area_px or a > 0.4 * H * W:
-            continue
-        if (b & seed).sum() / a < 0.12:              # 솟은 영역과 겹침
-            continue
-        ys, xs = np.where(b)                          # 물체 '바닥'이 보드 위인지
-        y0, y1 = ys.min(), ys.max()
-        band = b & (np.arange(H)[:, None] >= y1 - max(3, int(0.12*(y1-y0))))
-        if band.sum() == 0 or (band & qm).sum() / band.sum() < 0.4:
-            continue
-        cand.append((a, b))
+    if r.masks is not None:
+        # 마스크 선별을 GPU에서(면적·솟음겹침 벡터화) → 80개 풀해상도 CPU 루프(≈900ms) 제거
+        import torch
+        md = r.masks.data > 0.5                               # (N,H,W) bool, GPU
+        dvc = md.device
+        seed_t = torch.from_numpy(np.ascontiguousarray(seed)).to(dvc)
+        qm_t = torch.from_numpy(np.ascontiguousarray(qm)).to(dvc)
+        areas = md.sum(dim=(1, 2))
+        ov = (md & seed_t).sum(dim=(1, 2))
+        keep = ((areas >= min_area_px) & (areas <= 0.4*H*W) &
+                (ov.float() / areas.clamp(min=1).float() >= 0.12))
+        for i in torch.nonzero(keep).flatten().tolist():
+            b_t = md[i]
+            rows = torch.nonzero(b_t.any(dim=1)).flatten()      # 바닥이 보드 위인지
+            if rows.numel() == 0:
+                continue
+            y0, y1 = int(rows.min()), int(rows.max())
+            yb = y1 - max(3, int(0.12*(y1-y0)))
+            band = b_t.clone(); band[:yb] = False
+            bs = int(band.sum())
+            if bs == 0 or int((band & qm_t).sum()) / bs < 0.4:
+                continue
+            cand.append((int(areas[i]), b_t.cpu().numpy()))
     cand.sort(key=lambda o: -o[0])
     kept, acc = [], np.zeros((H, W), bool)
     for a, b in cand:
@@ -132,9 +142,9 @@ def process_frame_combined(frame, pipe, model, board, K, dist, square_len=0.038,
 
     # ---- 합성 화면 ----
     vis = imgu.copy()
-    hcolor = dv.colorize_height(hm, 60)
-    m3 = objunion[:, :, None]
-    vis = np.where(m3, (0.45*vis + 0.55*hcolor).astype(np.uint8), vis)  # 물체에만 높이 히트맵
+    hcolor = dv.colorize_height(hm, 60)      # 인셋·합성용(colorize는 저렴)
+    if objunion.any():                       # 비싼 블렌드는 물체 픽셀에만(전체 2M 방지)
+        vis[objunion] = (0.45*imgu[objunion] + 0.55*hcolor[objunion]).astype(np.uint8)
     cv2.polylines(vis, [hm["quad"]], True, (0, 0, 255), 2)
     cv2.drawFrameAxes(vis, K, dist*0, rvec, tvec, square_len*2, 2)
     for i, o in enumerate(objects):

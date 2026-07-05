@@ -47,30 +47,45 @@ def height_map_from_depth(frame, pipe, board, K, dist, square_len=0.038, squares
     region = np.zeros((H, W), np.uint8)
     cv2.fillConvexPoly(region, quad, 255)
 
-    uu, vv = np.meshgrid(np.arange(W), np.arange(H))
-    pix = np.stack([uu.ravel(), vv.ravel(), np.ones(W*H)], 0).astype(np.float64)
-    dirs = Kinv @ pix
-    ndir = n_cam @ dirs
-    Zplane = ((n_cam @ t) / ndir * dirs[2]).reshape(H, W)
-
+    # ---- 픽셀당 3D 계산을 GPU(torch)로 (numpy float64 2M픽셀 → 큰 병목이었음) ----
+    import torch
     from PIL import Image
-    pred = pipe(Image.fromarray(cv2.cvtColor(imgu, cv2.COLOR_BGR2RGB)))["predicted_depth"]
-    pred = cv2.resize(pred.squeeze().cpu().numpy().astype(np.float64), (W, H))
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
 
-    m = (region > 0) & np.isfinite(Zplane) & (Zplane > 0.05) & (Zplane < 3)
-    A, B = np.polyfit(pred[m], 1.0/Zplane[m], 1)
-    yhat = A*pred[m] + B
-    r2 = 1 - np.sum((1.0/Zplane[m]-yhat)**2)/np.sum((1.0/Zplane[m]-(1.0/Zplane[m]).mean())**2)
+    pred_t = pipe(Image.fromarray(cv2.cvtColor(imgu, cv2.COLOR_BGR2RGB)))["predicted_depth"]
+    pred_t = pred_t.squeeze().to(dev).float()
+    pred_t = torch.nn.functional.interpolate(pred_t[None, None], size=(H, W),
+                                             mode="bilinear", align_corners=False)[0, 0]
+    Kinv_t = torch.tensor(Kinv, device=dev, dtype=torch.float32)
+    n_t = torch.tensor(n_cam, device=dev, dtype=torch.float32)
+    t_t = torch.tensor(t, device=dev, dtype=torch.float32)
+    R_t = torch.tensor(R, device=dev, dtype=torch.float32)
 
-    invZ = A*pred + B
-    Zmet = np.where(invZ > 1e-6, 1.0/invZ, np.nan)
-    Pcam = dirs * (Zmet.reshape(-1)/dirs[2])
-    up = np.sign(-(n_cam @ t))
-    height_mm = (up*(n_cam @ (Pcam - t.reshape(3, 1)))).reshape(H, W) * 1000.0
-    # 보드(작업공간) 좌표계 3D 점군: P_board = R^T (P_cam - t). z축이 '위'.
-    Rt = R.T
-    pts_board = (Rt @ (Pcam - t.reshape(3, 1))).T.reshape(H, W, 3)
-    pts_board[..., 2] *= up   # 위 방향 +로 통일
+    vv, uu = torch.meshgrid(torch.arange(H, device=dev, dtype=torch.float32),
+                            torch.arange(W, device=dev, dtype=torch.float32), indexing="ij")
+    pix = torch.stack([uu.reshape(-1), vv.reshape(-1), torch.ones(H*W, device=dev)], 0)  # 3xN
+    dirs = Kinv_t @ pix
+    Zplane = ((n_t @ t_t) / (n_t @ dirs)) * dirs[2]
+
+    predf = pred_t.reshape(-1)
+    region_t = torch.tensor(region > 0, device=dev).reshape(-1)
+    valid = region_t & torch.isfinite(Zplane) & (Zplane > 0.05) & (Zplane < 3)
+    x = predf[valid]; y = 1.0 / Zplane[valid]; nn = x.numel()
+    sx_, sy_, sxx, sxy = x.sum(), y.sum(), (x*x).sum(), (x*y).sum()
+    A = (nn*sxy - sx_*sy_) / (nn*sxx - sx_*sx_)
+    B = (sy_ - A*sx_) / nn
+    yhat = A*x + B
+    r2 = float(1 - ((y-yhat)**2).sum() / ((y-y.mean())**2).sum())
+
+    invZ = A*predf + B
+    Zmet = torch.where(invZ > 1e-6, 1.0/invZ, torch.full_like(invZ, float("nan")))
+    Pcam = dirs * (Zmet / dirs[2])
+    up = float(torch.sign(-(n_t @ t_t)))
+    height_mm = (up * (n_t @ (Pcam - t_t[:, None]))).reshape(H, W) * 1000.0
+    pts_board = (R_t.T @ (Pcam - t_t[:, None])).T.reshape(H, W, 3).clone()
+    pts_board[..., 2] *= up
+    height_mm = height_mm.cpu().numpy()
+    pts_board = pts_board.cpu().numpy()
     # 주의: 보드 밖을 0으로 자르지 않음 → 보드 위로 솟은 큰 물체가 잘리지 않게.
     return {"imgu": imgu, "height_mm": height_mm, "region": region, "quad": quad,
             "pts_board": pts_board, "rvec": rvec, "tvec": tvec, "r2": float(r2)}
