@@ -110,28 +110,31 @@ def _box_mesh(center, axis, length, radius):
 
 
 def render_plotly(objects, markers=None, ws=(240, 320), title="virtual 3D (interactive)",
-                  html_path=None, open_browser=False):
+                  html_path=None, open_browser=False, origin_mm=(0.0, 0.0), cam_pose=None):
     """마우스로 회전/확대/이동 가능한 인터랙티브 3D 씬(plotly). fig 반환 + (옵션)HTML 저장.
 
     원통/박스는 solid mesh, 마커는 평면 위 사각형, 원점(id0) 축 표시.
+    origin_mm: id0 기준(X음수 가능) 좌표를 이 값만큼 빼서 0~ws 격자에 맞춤(render_virtual_scene과 동일).
+    cam_pose=(rvec,tvec): 주면 초기 카메라를 실제 카메라 방향에 맞춤(열자마자 실제와 같은 방향; 이후 마우스 자유).
     HTML은 plotly.js를 **자체 포함**(오프라인에서도 파일만 열면 작동).
     open_browser=True면 저장한 HTML을 기본 브라우저로 연다.
     """
     import plotly.graph_objects as go
+    ox, oy = float(origin_mm[0]), float(origin_mm[1])
     palette = ["#00c8ff", "#00ff78", "#ffa000", "#c864ff", "#78dcff"]
     data = []
     # 작업공간 평면
     data.append(go.Mesh3d(x=[0, ws[0], ws[0], 0], y=[0, 0, ws[1], ws[1]], z=[0, 0, 0, 0],
                           i=[0, 0], j=[1, 2], k=[2, 3], color="#dddddd", opacity=0.25,
                           hoverinfo="skip", name="plane", showscale=False))
-    # 원점 축
+    # 원점 축 (id0 = 격자상 (-ox,-oy))
     for vec, col, nm in ([40, 0, 0], "red", "X"), ([0, 40, 0], "green", "Y"), ([0, 0, 40], "blue", "Z"):
-        data.append(go.Scatter3d(x=[0, vec[0]], y=[0, vec[1]], z=[0, vec[2]], mode="lines",
+        data.append(go.Scatter3d(x=[-ox, -ox+vec[0]], y=[-oy, -oy+vec[1]], z=[0, vec[2]], mode="lines",
                                  line=dict(color=col, width=5), hoverinfo="skip", showlegend=False))
     # 마커
     if markers:
         for mk in markers:
-            cm = np.asarray(mk["corners_mm"], float)
+            cm = np.asarray(mk["corners_mm"], float) - [ox, oy]
             xs = list(cm[:, 0]) + [cm[0, 0]]; ys = list(cm[:, 1]) + [cm[0, 1]]; zs = [0]*5
             col = "red" if mk["id"] == 0 else "#888888"
             data.append(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", line=dict(color=col, width=3),
@@ -142,6 +145,7 @@ def render_plotly(objects, markers=None, ws=(240, 320), title="virtual 3D (inter
         if cyl is None:
             continue
         c, axis, length, radius = cyl
+        c = np.asarray(c, float) - [ox, oy, 0.0]
         col = palette[idx % len(palette)]
         if ob.get("shape") == "box":
             V, I, J, Kf = _box_mesh(c, axis, length, radius)
@@ -151,9 +155,22 @@ def render_plotly(objects, markers=None, ws=(240, 320), title="virtual 3D (inter
                               color=col, opacity=0.85, name=f"#{idx} {ob.get('shape','')}",
                               hovertext=ob.get("label", f"#{idx}")))
     fig = go.Figure(data=data)
-    fig.update_layout(title=title, showlegend=False,
-                      scene=dict(xaxis_title="X(mm)", yaxis_title="Y(mm)", zaxis_title="Z up(mm)",
-                                 aspectmode="data"),
+    scene = dict(xaxis_title="X(mm)", yaxis_title="Y(mm)", zaxis_title="Z up(mm)", aspectmode="data")
+    if cam_pose is not None:
+        # plotly 3D는 카메라 이미지와 좌우 반사(handedness) 관계 → **Y축 방향만 뒤집어**
+        # (autorange reversed) 실제와 같은 chirality로 만든다. 좌표 '값'은 true 유지
+        # (예: id28은 여전히 (548, 894)로 읽힘 — 데이터를 반사하지 않음). 초기 카메라는
+        # 실제 카메라 방향에 맞춰 열자마자 실제 시점(위에서 내려다봄).
+        scene["yaxis"] = dict(title="Y(mm)", autorange="reversed")
+        R, _ = cv2.Rodrigues(np.asarray(cam_pose[0], float).reshape(3, 1))
+        Cw = (-R.T @ np.asarray(cam_pose[1], float).reshape(3, 1)).ravel() * 1000.0   # 카메라 위치(map mm)
+        cen = np.array([ws[0]/2 + ox, ws[1]/2 + oy, 0.0])
+        d = Cw - cen
+        # yaxis 반전에 맞춰 eye_y 부호 보정 → id0(근) 쪽에서 내려다봄(실제 시점과 일치)
+        eye = np.array([d[0], -d[1], abs(d[2]) + 1e-6]); eye /= (np.linalg.norm(eye) + 1e-9)
+        scene["camera"] = dict(eye=dict(x=float(eye[0]*1.7), y=float(eye[1]*1.7), z=float(eye[2]*1.7)),
+                               up=dict(x=0, y=0, z=1), center=dict(x=0, y=0, z=0))
+    fig.update_layout(title=title, showlegend=False, scene=scene,
                       margin=dict(l=0, r=0, t=30, b=0))
     if html_path:
         fig.write_html(html_path, include_plotlyjs=True, full_html=True)  # 자체 포함(오프라인 OK)
@@ -163,20 +180,52 @@ def render_plotly(objects, markers=None, ws=(240, 320), title="virtual 3D (inter
     return fig
 
 
+def _lookat_aligned(cam_pose, center, D, el=28.0):
+    """실제 카메라 포즈(rvec,tvec) 방향에서 가상 3/4 카메라를 세움 → 좌우·앞뒤가 실제 뷰와 일치.
+
+    실제 카메라의 '수평 right/forward'를 가져와 roll 제거 후, 하강각 el로 내려다보게 재구성.
+    (방위각만 맞추면 카메라가 회전된 경우 좌우가 뒤집힘 → right 벡터를 직접 승계해야 함.)
+    """
+    R, _ = cv2.Rodrigues(np.asarray(cam_pose[0], float).reshape(3, 1))
+    right = np.array([R[0, 0], R[0, 1], 0.0])               # 실제 카메라 수평 right
+    if np.linalg.norm(right) < 1e-6:
+        right = np.array([1.0, 0.0, 0.0])
+    right /= np.linalg.norm(right)
+    fh = np.array([R[2, 0], R[2, 1], 0.0])                  # 실제 시선(forward) 수평성분
+    if np.linalg.norm(fh) < 1e-6:
+        fh = np.cross(np.array([0, 0, 1.0]), right)
+    fh /= np.linalg.norm(fh)
+    er = np.radians(el)
+    fwd = np.cos(er)*fh - np.sin(er)*np.array([0, 0, 1.0])  # el만큼 내려다봄
+    fwd /= np.linalg.norm(fwd)
+    eye = center - D*fwd
+    ycam = np.cross(fwd, right)                             # 카메라 아래축(y=down)
+    Rwc = np.stack([right, ycam, fwd])
+    rvec, _ = cv2.Rodrigues(Rwc)
+    return rvec, (-Rwc @ eye).reshape(3, 1)
+
+
 def render_virtual_scene(objects, markers=None, img_size=(720, 720), ws=(220, 300),
-                         az=45.0, el=28.0, title="virtual 3D scene"):
+                         az=45.0, el=28.0, title="virtual 3D scene", origin_mm=(0.0, 0.0),
+                         cam_pose=None, plane_xyxy=None):
     """objects[i]['cyl']=(center,axis,length,radius)[mm] 를 가상 3D로 렌더 → BGR 이미지.
 
     markers: [{'id':int, 'center_mm':(x,y), 'corners_mm':(4,2)}] 있으면 평면에 마커 위치 표시.
+    origin_mm: 입력 좌표계(예: id0 기준, X 음수 가능)의 원점을 이 값만큼 빼서 0~ws 격자에 맞춤.
+               분산앵커 지도는 (x0_mm, y0_mm)=지도 최소코너를 주면 됨. 기본 (0,0)=변환 없음.
     """
+    ox, oy = float(origin_mm[0]), float(origin_mm[1])
     W, H = img_size
     vis = np.full((H, W, 3), 28, np.uint8)
     Kv = np.array([[W*0.9, 0, W/2], [0, W*0.9, H/2], [0, 0, 1.]])
     center = np.array([ws[0]/2, ws[1]/2, 35.])
     dist = max(ws) * 2.4
-    ar, er = np.radians(az), np.radians(el)
-    eye = center + dist*np.array([np.cos(er)*np.cos(ar), np.cos(er)*np.sin(ar), np.sin(er)])
-    rvec, tvec = _lookat(eye, center, Kv)
+    if cam_pose is not None:                       # 실제 카메라 방향 승계 → 좌우·앞뒤 실제와 일치
+        rvec, tvec = _lookat_aligned(cam_pose, center, dist, el)
+    else:
+        ar, er = np.radians(az), np.radians(el)
+        eye = center + dist*np.array([np.cos(er)*np.cos(ar), np.cos(er)*np.sin(ar), np.sin(er)])
+        rvec, tvec = _lookat(eye, center, Kv)
 
     def proj(P):
         return cv2.projectPoints(np.asarray(P, float), rvec, tvec, Kv, None)[0].reshape(-1, 2).astype(int)
@@ -187,8 +236,8 @@ def render_virtual_scene(objects, markers=None, img_size=(720, 720), ws=(220, 30
         p = proj([[gx, 0, 0], [gx, ws[1], 0]]); cv2.line(vis, tuple(p[0]), tuple(p[1]), (65, 65, 65), 1)
     for gy in np.linspace(0, ws[1], ny+1):
         p = proj([[0, gy, 0], [ws[0], gy, 0]]); cv2.line(vis, tuple(p[0]), tuple(p[1]), (65, 65, 65), 1)
-    # 원점 축 (id0)
-    o = proj([[0, 0, 0], [45, 0, 0], [0, 45, 0], [0, 0, 45]])
+    # 원점 축 (id0) — 지도 좌표 (0,0)의 격자 위치 = (-ox,-oy)
+    o = proj([[-ox, -oy, 0], [-ox+45, -oy, 0], [-ox, -oy+45, 0], [-ox, -oy, 45]])
     cv2.line(vis, tuple(o[0]), tuple(o[1]), (0, 0, 255), 2)
     cv2.line(vis, tuple(o[0]), tuple(o[2]), (0, 255, 0), 2)
     cv2.line(vis, tuple(o[0]), tuple(o[3]), (255, 60, 0), 2)
@@ -196,7 +245,7 @@ def render_virtual_scene(objects, markers=None, img_size=(720, 720), ws=(220, 30
     # ArUco 마커 위치 (평면 위 작은 사각형 + ID)
     if markers:
         for mk in markers:
-            cm = np.asarray(mk["corners_mm"], float)
+            cm = np.asarray(mk["corners_mm"], float) - [ox, oy]
             poly = np.c_[cm, np.zeros(len(cm))]      # z=0 평면
             pp = proj(poly)
             col = (0, 0, 255) if mk["id"] == 0 else (180, 180, 180)  # id0=빨강(REF)
@@ -210,6 +259,7 @@ def render_virtual_scene(objects, markers=None, img_size=(720, 720), ws=(220, 30
         if cyl is None:
             continue
         c, axis, length, radius = cyl
+        c = np.asarray(c, float) - [ox, oy, 0.0]      # 지도 원점 오프셋
         col = colors[i % len(colors)]
         if ob.get("shape") == "box":
             bc = _box_corners(c, axis, length, radius)

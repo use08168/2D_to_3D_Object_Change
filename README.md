@@ -94,19 +94,22 @@ src/
   depth_volume.py    # Depth Anything V2 + 평면 앵커링 → 높이맵·3D 점군
   fastsam_detect.py  # FastSAM + 배경차분 선별
   live_combined.py   # DA+FastSAM+ArUco 실시간 통합 (자연 시점 합성)
-  scene3d.py         # 가상 3D 씬 렌더(원통 프리미티브 + 마커 지도)
+  live_da.py         # DA 단독 실시간 + 분산앵커 작업공간(top-hat 국소대비 검출)
+  workspace.py       # 분산 앵커 작업공간 — 마커 지도 로컬라이제이션·캘리브
+  scene3d.py         # 가상 3D 씬 렌더(원통/박스 + 마커 지도, OpenCV·plotly 인터랙티브)
   bg_segment.py      # 배경차분(무학습) 물체 추출
 notebooks/
   01_charuco_calibration.ipynb   # 카메라 캘리브레이션
-  02_measure_object_on_board.ipynb
-  03_segment_object.ipynb        # 고전 필터 분할
-  05_bgdiff_experiment.ipynb     # 배경차분
-  06_fastsam_measure.ipynb       # FastSAM
-  07_depth_volume.ipynb          # 단안 깊이 + 부피
-  08_live_combined.ipynb         # 실시간 통합
-  09_virtual_scene.ipynb         # 가상 3D 씬
+  02~09                          # 측정·분할·깊이·실시간 통합·가상 3D
+  10~12                          # 실시간 모드(경량 / 하이브리드 / DA 단독)
+  13_workspace_integration.ipynb # 분산 앵커 작업공간 통합·검증
+  14_realtime_workspace.ipynb    # 웹캠 실시간 작업공간
+  15_realtime_tophat.ipynb       # top-hat 검출 + 방향 정렬 + 인터랙티브 3D
+docs/specification/              # 상세 명세(노트북·모듈별)
 docs/images/                     # 데모 이미지
 ```
+
+> 상세: [docs/specification/README.md](docs/specification/README.md) · 작업공간(13~15): [docs/specification/13-15_workspace.md](docs/specification/13-15_workspace.md)
 
 ## 6. 환경
 
@@ -117,8 +120,8 @@ docs/images/                     # 데모 이미지
 
 ## 7. 한계 & 향후
 
-- **단일 시점**이라 부피는 근사(가려진 면 모름). → **다중 시점**(ArUco 정합)으로 확장 예정.
-- 현재는 ChArUco 보드 평면 기준. → **분산 앵커(id0~30)** 로 넓은 작업공간 매핑으로 확장.
+- **분산 앵커(id0~30) 넓은 작업공간 완료(13~15)** — 마커 4~5개만 보여도 로컬라이즈, top-hat 국소대비로 어두운/낮은 물체까지 검출, 실제 방향 정렬 + 마우스 인터랙티브 3D. (바닥 오차 ~6~10mm는 지도/캘리브 정확도가 결정)
+- **단일 시점**이라 부피는 근사(가려진 면 모름), 아주 얇고 균일한 물체는 놓칠 수 있음. → **다중 시점**(ArUco 정합)으로 확장 예정.
 - **꺾인 물체** 판별, 물체 ID/추적, 로봇팔 **핸드-아이 캘리브레이션**(`cv2.calibrateHandEye`) 연결.
 
 ---
