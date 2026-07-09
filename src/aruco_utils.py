@@ -30,9 +30,15 @@ def approx_camera_matrix(image_size, hfov_deg: float = 60.0):
 
 
 def load_intrinsics(npz_path):
-    """01 노트북이 저장한 camera_intrinsics.npz 로드 → (K, dist)."""
+    """내부파라미터 npz 로드 → (K, dist). 두 키 규약 모두 지원.
+
+    - ChArUco(01): camera_matrix / dist_coeffs
+    - workspace(calibrate_from_map): K / dist
+    """
     data = np.load(npz_path)
-    return data["camera_matrix"].astype(np.float64), data["dist_coeffs"].astype(np.float64)
+    kkey = "camera_matrix" if "camera_matrix" in data else "K"
+    dkey = "dist_coeffs" if "dist_coeffs" in data else "dist"
+    return data[kkey].astype(np.float64), data[dkey].astype(np.float64)
 
 
 # ---------------------------------------------------------------------------

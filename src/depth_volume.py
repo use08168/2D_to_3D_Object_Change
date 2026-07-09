@@ -22,19 +22,26 @@ def load_depth_model(model_id="depth-anything/Depth-Anything-V2-Small-hf", devic
     return pipeline("depth-estimation", model=model_id, device=device)
 
 
-def height_map_from_depth(frame, pipe, board, K, dist, square_len=0.038, squares_xy=(5, 7)):
-    """왜곡보정→보드자세→DA깊이→평면앵커링→보드평면 위 높이맵(mm).
+def height_map_from_depth(frame, pipe, board, K, dist, square_len=0.038, squares_xy=(5, 7),
+                          pose=None, plane_xyxy=None):
+    """왜곡보정→평면자세→DA깊이→평면앵커링→평면 위 높이맵(mm).
 
-    반환 dict(imgu, height_mm, region, quad, rvec, tvec, r2) 또는 보드 미검출 시 None.
+    자세: pose=(rvec,tvec) 주면 그걸(분산앵커 로컬라이제이션), 없으면 ChArUco 보드 검출.
+    평면범위: plane_xyxy=(x0,y0,x1,y1)[m] 주면 그 사각형(작업공간), 없으면 보드 크기.
+    반환 dict(imgu, height_mm, region, quad, pts_board, rvec, tvec, r2) 또는 미검출 시 None.
     """
     K = K.astype(np.float64)
     imgu = cv2.undistort(frame, K, dist)
     H, W = imgu.shape[:2]
     z0 = np.zeros((5, 1))
-    gray = cv2.cvtColor(imgu, cv2.COLOR_BGR2GRAY)
-    rvec, tvec, cc, ci = au.detect_charuco_pose(gray, board, K, z0)
-    if rvec is None:
-        return None
+    if pose is not None:
+        rvec = np.asarray(pose[0], np.float64).reshape(3, 1)
+        tvec = np.asarray(pose[1], np.float64).reshape(3, 1)
+    else:
+        gray = cv2.cvtColor(imgu, cv2.COLOR_BGR2GRAY)
+        rvec, tvec, cc, ci = au.detect_charuco_pose(gray, board, K, z0)
+        if rvec is None:
+            return None
     R, _ = cv2.Rodrigues(rvec)
     t = tvec.reshape(3)
     n_cam = R[:, 2]
@@ -43,7 +50,11 @@ def height_map_from_depth(frame, pipe, board, K, dist, square_len=0.038, squares
 
     def proj(P):
         return cv2.projectPoints(np.asarray(P, np.float64), rvec, tvec, K, z0)[0].reshape(-1, 2)
-    quad = proj([[0, 0, 0], [sx*square_len, 0, 0], [sx*square_len, sy*square_len, 0], [0, sy*square_len, 0]]).astype(np.int32)
+    if plane_xyxy is not None:
+        x0, y0, x1, y1 = plane_xyxy
+        quad = proj([[x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0]]).astype(np.int32)
+    else:
+        quad = proj([[0, 0, 0], [sx*square_len, 0, 0], [sx*square_len, sy*square_len, 0], [0, sy*square_len, 0]]).astype(np.int32)
     region = np.zeros((H, W), np.uint8)
     cv2.fillConvexPoly(region, quad, 255)
 
