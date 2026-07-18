@@ -97,7 +97,9 @@ src/
   live_da.py         # DA 단독 실시간 + 분산앵커 작업공간(top-hat 국소대비 검출)
   workspace.py       # 분산 앵커 작업공간 — 마커 지도 로컬라이제이션·캘리브
   scene3d.py         # 가상 3D 씬 렌더(원통/박스 + 마커 지도, OpenCV·plotly 인터랙티브)
+  stream_server.py   # 폰 카메라 실시간 수신 서버(WebSocket, Tailscale 전용·세션 저장)
   bg_segment.py      # 배경차분(무학습) 물체 추출
+mobile/              # 폰 카메라 스트리밍 앱(Expo Go, SDK 54) — config.js에 서버 주소(비커밋)
 notebooks/
   01_charuco_calibration.ipynb   # 카메라 캘리브레이션
   02~09                          # 측정·분할·깊이·실시간 통합·가상 3D
