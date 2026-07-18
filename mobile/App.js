@@ -13,11 +13,14 @@ export default function App() {
   const [streaming, setStreaming] = useState(false);
   const [stats, setStats] = useState({ sent: 0, fps: 0, kb: 0 });
   const [picSize, setPicSize] = useState(undefined);
+  const [hq, setHq] = useState(true);              // 고화질(2MP q0.75) ↔ 속도(1MP q0.6)
   const [permission, requestPermission] = useCameraPermissions();
   const camRef = useRef(null);
   const wsRef = useRef(null);
   const streamingRef = useRef(false);
   const pingT0 = useRef(0);
+  const sizesRef = useRef([]);
+  const hqRef = useRef(true);
 
   useEffect(() => { if (permission && !permission.granted) requestPermission(); }, [permission]);
 
@@ -39,18 +42,28 @@ export default function App() {
     ws.onclose = () => { setStatus('연결 종료'); stopStream(); };
   };
 
+  const applyPreset = (highQ) => {
+    // 프리셋별 목표 화소수에 가장 가까운 지원 크기 선택
+    const target = highQ ? 1920 * 1440 : 1152 * 864;   // 고화질 ~2.7MP / 속도 ~1MP
+    let best, bestDiff = Infinity;
+    for (const s of sizesRef.current) {
+      const [w, h] = s.split('x').map(Number);
+      if (!w || !h) continue;
+      const d = Math.abs(w * h - target);
+      if (d < bestDiff) { bestDiff = d; best = s; }
+    }
+    if (best) setPicSize(best);
+  };
+
+  const toggleHq = () => {
+    const next = !hqRef.current;
+    hqRef.current = next; setHq(next); applyPreset(next);
+  };
+
   const onCameraReady = async () => {
-    // 가용 사진 크기 중 ~1920x1440(2.7MP)에 가장 가까운 걸 선택 — 화질↑ (캘리브·검출용)
     try {
-      const sizes = (await camRef.current?.getAvailablePictureSizesAsync?.()) ?? [];
-      let best, bestDiff = Infinity;
-      for (const s of sizes) {
-        const [w, h] = s.split('x').map(Number);
-        if (!w || !h) continue;
-        const d = Math.abs(w * h - 1920 * 1440);
-        if (d < bestDiff) { bestDiff = d; best = s; }
-      }
-      if (best) setPicSize(best);
+      sizesRef.current = (await camRef.current?.getAvailablePictureSizesAsync?.()) ?? [];
+      applyPreset(hqRef.current);
     } catch {}
   };
 
@@ -61,7 +74,8 @@ export default function App() {
       try {
         const t0 = Date.now();
         const photo = await camRef.current.takePictureAsync({
-          base64: true, quality: 0.75, skipProcessing: true, shutterSound: false, exif: false,
+          base64: true, quality: hqRef.current ? 0.75 : 0.6,
+          skipProcessing: true, shutterSound: false, exif: false,
         });
         if (!streamingRef.current) break;
         ws.send('f:' + photo.base64);
@@ -119,6 +133,9 @@ export default function App() {
             style={[styles.btn, { flex: 1, backgroundColor: streaming ? '#dc2626' : '#16a34a' }]}
             onPress={streaming ? stopStream : startStream}>
             <Text style={styles.btnText}>{streaming ? '정지' : '스트리밍 시작'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.btn, { backgroundColor: '#7c3aed' }]} onPress={toggleHq}>
+            <Text style={styles.btnText}>{hq ? '고화질' : '속도'}</Text>
           </TouchableOpacity>
         </View>
       </View>

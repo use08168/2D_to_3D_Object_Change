@@ -33,7 +33,8 @@ def map_extent_m(corners):
     return float(allc[:, 0].min()), float(allc[:, 1].min()), float(allc[:, 0].max()), float(allc[:, 1].max())
 
 
-def calibrate_from_map(image_dir, corners_map, detector=None, min_markers=6, pattern="*.jpg"):
+def calibrate_from_map(image_dir, corners_map, detector=None, min_markers=6, pattern="*.jpg",
+                       max_views=None):
     """마커 지도(3D 알려진)로 여러 뷰에서 카메라 내부파라미터 추정 → (K, dist, rms, n_views).
 
     지도 구축에 쓴 다중뷰 사진을 그대로 캘리브레이션 타겟으로 재사용(Zhang, 평면 타겟).
@@ -63,6 +64,10 @@ def calibrate_from_map(image_dir, corners_map, detector=None, min_markers=6, pat
             imgpts.append(np.vstack(p).astype(np.float32))
     if len(objpts) < 3:
         return None
+    if max_views and len(objpts) > max_views:      # 스트림 세션은 프레임이 많으므로 균등 서브샘플
+        idx = np.linspace(0, len(objpts)-1, max_views).astype(int)
+        objpts = [objpts[i] for i in idx]
+        imgpts = [imgpts[i] for i in idx]
     rms, K, dist, _, _ = cv2.calibrateCamera(objpts, imgpts, sz, None, None)
     return K, dist, float(rms), len(objpts)
 
