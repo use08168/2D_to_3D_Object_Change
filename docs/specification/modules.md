@@ -136,6 +136,20 @@ DA 단독 실시간 + 분산 앵커 작업공간 파이프라인. 검출 `detect
 
 ---
 
+## mapping
+증분(전이) 마커 매핑 — 확정 마커가 새 마커의 기준이 되어 지도가 자란다(id0 없는 사진도 기여). 실험: `16_incremental_mapping.ipynb`
+
+| 함수 | 역할 |
+|---|---|
+| `detect_observations(files, detector, K, dist)` | 사진별 마커 코너 관측(왜곡 보정 옵션) |
+| `build_map_incremental(obs, ...)` | ①BFS 전이 성장(+외삽금지 게이트) ②게이지 고정(전 마커 22mm=스케일) ③전역 반복 정제 → (corners, stats{n_obs,std,hop}, info) |
+| `align_rigid` / `compare_maps` | 지도 강체 정렬 / 기준지도 대비 마커별 오차 |
+| `save_map(corners, path)` | marker_map.json 형식 저장(기존 파이프라인 호환) |
+
+> 실측: id0 2/84장 데이터로 31/31 등록(전이 성립). 부분뷰만은 hop당 오차 증가(57→85mm), **전역뷰(루프 클로저) 섞으면 hop 무관 평탄**. 게이지 고정 없으면 스케일 1.63배 폭주.
+
+---
+
 ## calibrate_stream
 스트림 세션 프레임으로 폰(스트림 해상도) 캘리브레이션.
 
