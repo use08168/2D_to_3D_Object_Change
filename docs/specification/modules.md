@@ -121,6 +121,19 @@ DA 단독 실시간 + 분산 앵커 작업공간 파이프라인. 검출 `detect
 
 ---
 
+## stream_server
+폰(Expo Go) → PC 실시간 프레임 수신 서버(WebSocket, Tailscale 전용). 상세: [16_phone_stream.md](16_phone_stream.md)
+
+| 함수 | 역할 |
+|---|---|
+| `detect_tailscale_ip()` | PC 자신의 Tailscale IPv4 자동 감지(CLI→인터페이스 스캔) — IP 하드코딩 없음 |
+| `_handle_frame(jpg, sess)` | JPEG 원본을 세션 폴더에 저장 + 디코드 → 뷰어 표시(fps) |
+| `handler(ws)` / `main()` | ping/pong·프레임 수신 루프 / Tailscale IP 바인딩 서버 |
+
+> 실행 `python src/stream_server.py [port] [host]`. 세션(연결)마다 `output/phone_stream/session_*/`에 전 프레임 자동 저장. `latest_frame` 전역이 검출 파이프라인 접점.
+
+---
+
 ## live_measure
 색 기반 실시간 복수 물체 측정(초기 버전).
 
