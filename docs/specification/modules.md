@@ -127,10 +127,37 @@ DA 단독 실시간 + 분산 앵커 작업공간 파이프라인. 검출 `detect
 | 함수 | 역할 |
 |---|---|
 | `detect_tailscale_ip()` | PC 자신의 Tailscale IPv4 자동 감지(CLI→인터페이스 스캔) — IP 하드코딩 없음 |
-| `_handle_frame(jpg, sess)` | JPEG 원본을 세션 폴더에 저장 + 디코드 → 뷰어 표시(fps) |
+| `_handle_frame(jpg, sess)` | JPEG 원본을 세션 폴더에 저장 + `latest_frame` 갱신(+뷰어 모드 표시) |
+| `init_detection()` / `process_and_render(frame)` | 검출 리소스 로드(지도·K·DA) / 한 프레임 검출→카메라\|가상3D 뷰 |
+| `detect_worker()` | **최신 프레임만 소비**하는 검출 루프(밀림 없음, executor로 비블로킹) |
 | `handler(ws)` / `main()` | ping/pong·프레임 수신 루프 / Tailscale IP 바인딩 서버 |
 
-> 실행 `python src/stream_server.py [port] [host]`. 세션(연결)마다 `output/phone_stream/session_*/`에 전 프레임 자동 저장. `latest_frame` 전역이 검출 파이프라인 접점.
+> 뷰어 `python src/stream_server.py [port] [host]` / 검출 `--detect`. 세션(연결)마다 `output/phone_stream/session_*/`에 전 프레임 자동 저장. K는 phone_stream_intrinsics.npz(해상도 자동 스케일, 없으면 근사 폴백).
+
+---
+
+## mapping
+증분(전이) 마커 매핑 — 확정 마커가 새 마커의 기준이 되어 지도가 자란다(id0 없는 사진도 기여). 실험: `16_incremental_mapping.ipynb`
+
+| 함수 | 역할 |
+|---|---|
+| `detect_observations(files, detector, K, dist)` | 사진별 마커 코너 관측(왜곡 보정 옵션) |
+| `build_map_incremental(obs, ...)` | ①BFS 전이 성장(+외삽금지 게이트) ②게이지 고정(전 마커 22mm=스케일) ③전역 반복 정제 → (corners, stats{n_obs,std,hop}, info) |
+| `align_rigid` / `compare_maps` | 지도 강체 정렬 / 기준지도 대비 마커별 오차 |
+| `save_map(corners, path)` | marker_map.json 형식 저장(기존 파이프라인 호환) |
+
+> 실측: id0 2/84장 데이터로 31/31 등록(전이 성립). 부분뷰만은 hop당 오차 증가(57→85mm), **전역뷰(루프 클로저) 섞으면 hop 무관 평탄**. 게이지 고정 없으면 스케일 1.63배 폭주.
+
+---
+
+## calibrate_stream
+스트림 세션 프레임으로 폰(스트림 해상도) 캘리브레이션.
+
+| 함수 | 역할 |
+|---|---|
+| `latest_session()` / `main()` | 최신 session_* 자동 선택 → `ws.calibrate_from_map`(25뷰) → `output/phone_stream_intrinsics.npz` |
+
+> 사진모드와 영상모드 화각이 다름(실측 fx 7% 차이) → 스트림 전용 캘리브 필수. 실측 RMS 5.6px.
 
 ---
 
